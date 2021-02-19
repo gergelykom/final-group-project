@@ -62,7 +62,7 @@ We selected Azure Devops because it has all the key fundamentals that are requir
 
 ### Planning
 
-![Planning](documentation/board.PNG)
+![Planning](documentation/board.png)
 The project used Dev Ops tools and techniques, and as such used a Kanban board, with Epics and Issues that were assigned to the various team members to track progress and maintain order for the project.
 The chosen Kanban board tech for this project was Azure Dev Ops' Boards, this choice was made to ensure that everything related to the project was accessible in one place.
 ### CI/CD Pipeline
