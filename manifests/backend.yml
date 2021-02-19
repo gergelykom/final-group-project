@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: spring-petclinic-rest
+  namespace: plzworkplz
+spec:
+  selector:
+    app: spring-petclinic-rest
+  ports:
+  - protocol: TCP
+    port: 9966
+    targetPort: 9966
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spring-petclinic-rest
+  namespace: plzworkplz
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: spring-petclinic-rest
+  template:
+    metadata:
+      labels:
+        app: spring-petclinic-rest
+    spec:
+      containers:
+      - name: spring-petclinic-rest
+        image: plzwork.azurecr.io/spring-petclinic-rest
+        ports:
+        - containerPort: 9966
+      imagePullSecrets:
+      - name: plzwork4851c18a-auth

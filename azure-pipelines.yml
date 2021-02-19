@@ -1,0 +1,192 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- main
+
+
+# Deploy to Azure Kubernetes Service
+# Build and push image to Azure Container Registry; Deploy to Azure Kubernetes Service
+# https://docs.microsoft.com/azure/devops/pipelines/languages/docker
+
+
+
+resources:
+- repo: self
+
+variables:
+
+  # Container registry service connection established during pipeline creation
+  dockerRegistryServiceConnection: '37cee765-e6ee-4913-83e4-8ba2fed60e34'
+  imageRepository: 'Petclinic-Full'
+  containerRegistry: 'plzwork.azurecr.io'
+  dockerfilePath: '**/Dockerfile'
+  tag: '$(Build.BuildId)'
+  imagePullSecret: 'plzwork4851c18a-auth'
+  
+  # Agent VM image name
+  vmImageName: 'ubuntu-18.04'
+
+stages:
+- stage: Build
+  displayName: Build stage
+  jobs:
+  - job: Build
+    displayName: Test, Build and Push
+    pool:
+      vmImage: $(vmImageName)
+    steps:
+
+      - task: TerraformInstaller@0
+        inputs:
+          terraformVersion: 'latest'
+
+      - task: TerraformCLI@0
+        inputs:
+          command: 'init'
+          workingDirectory: '$(System.DefaultWorkingDirectory)/terraform/'
+          allowTelemetryCollection: true
+
+      - task: TerraformCLI@0
+        inputs:
+          command: 'plan'
+          workingDirectory: '$(System.DefaultWorkingDirectory)/terraform/'
+          environmentServiceName: 'Free Trial(11)(17f851e4-a297-478b-8b1b-49033c27e889)'
+          allowTelemetryCollection: true
+
+      - task: TerraformCLI@0
+        inputs:
+          command: 'apply'
+          workingDirectory: '$(System.DefaultWorkingDirectory)/terraform/'
+          environmentServiceName: 'Free Trial(11)(17f851e4-a297-478b-8b1b-49033c27e889)'
+          commandOptions: '-auto-approve'
+          allowTelemetryCollection: true
+
+      - task: CopyFiles@2
+        displayName: Copy Files
+        inputs:
+            SourceFolder: '$(System.DefaultWorkingDirectory)/terraform'
+            Contents: '**'
+            TargetFolder: '$(build.artifactstagingdirectory)/terraform'
+      - task: Npm@1
+        displayName: Install node via json file
+        inputs:
+          command: 'install'
+          workingDir: './frontend/spring-petclinic-angular'
+          verbose: true
+      
+      - script: |
+          #!/bin/bash
+          echo Download testing dependencies
+          sudo apt-get update
+          curl -sL https://deb.nodesource.com/setup_12.x | sudo -E bash -
+          sudo apt install nodejs unzip wget chromium-browser
+          CHROME_BIN=/usr/bin/chromium-browser
+          sudo wget https://chromedriver.storage.googleapis.com/2.41/chromedriver_linux64.zip
+          sudo unzip chromedriver_linux64.zip
+          sudo mv chromedriver /usr/bin/chromedriver
+          sudo chown root:root /usr/bin/chromedriver
+          sudo chmod +x /usr/bin/chromedriver
+          sudo npm uninstall -g angular-cli @angular/cli
+          sudo npm cache clean
+          sudo npm install -g @angular/cli@latest
+          sudo npm install -g n
+          sudo npm update
+          cd ./frontend/spring-petclinic-angular
+          sudo npm i
+          npm test
+          echo Done
+            
+      
+      - upload: manifests
+        artifact: manifests
+      
+      - task: DockerCompose@0
+        displayName: Build images with docker compose
+        inputs:
+          containerregistrytype: 'Azure Container Registry'
+          azureSubscription: 'Free Trial (17f851e4-a297-478b-8b1b-49033c27e889)'
+          azureContainerRegistry: '{"loginServer":"plzwork.azurecr.io", "id" : "/subscriptions/17f851e4-a297-478b-8b1b-49033c27e889/resourceGroups/k8group/providers/Microsoft.ContainerRegistry/registries/plzwork"}'
+          dockerComposeFile: '**/docker-compose.yml'
+          action: 'Build services'
+          includeLatestTag: true
+      
+      - task: DockerCompose@0
+        displayName: Push images with docker compose
+        inputs:
+          containerregistrytype: 'Azure Container Registry'
+          azureSubscription: 'Free Trial (17f851e4-a297-478b-8b1b-49033c27e889)'
+          azureContainerRegistry: '{"loginServer":"plzwork.azurecr.io", "id" : "/subscriptions/17f851e4-a297-478b-8b1b-49033c27e889/resourceGroups/k8group/providers/Microsoft.ContainerRegistry/registries/plzwork"}'
+          dockerComposeFile: '**/docker-compose.yml'
+          action: 'Push services'
+          includeLatestTag: true
+
+- stage: Deploy
+  displayName: Deploy stage
+  dependsOn: Build
+
+  jobs:
+  - deployment: Deploy
+    displayName: Deploy
+    pool:
+      vmImage: $(vmImageName)
+    environment: 'PetclinicFull-2088.plzworkplz'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          
+          - task: KubernetesManifest@0
+            displayName: Create imagePullSecret
+            inputs:
+              action: 'createSecret'
+              kubernetesServiceConnection: 'k8spipeline-plzworkplz'
+              namespace: 'plzworkplz'
+              secretType: 'dockerRegistry'
+              secretName: '$(imagePullSecret)'
+              dockerRegistryEndpoint: '$(dockerRegistryServiceConnection)'
+          
+          - task: Kubernetes@1
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceEndpoint: 'k8spipeline-plzworkplz'
+              namespace: 'plzworkplz'
+              command: 'apply'
+              arguments: '-f $(Pipeline.Workspace)/manifests/backend.yml'
+              secretType: 'dockerRegistry'
+              containerRegistryType: 'Azure Container Registry'
+              azureSubscriptionEndpointForSecrets: 'Free Trial(11)(17f851e4-a297-478b-8b1b-49033c27e889)'
+              azureContainerRegistry: 'plzwork.azurecr.io'
+              secretName: '$(imagePullSecret)'
+          
+          - task: Kubernetes@1
+            displayName: Deploy Frontend
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceEndpoint: 'k8spipeline-plzworkplz'
+              namespace: 'plzworkplz'
+              command: 'apply'
+              arguments: '-f $(Pipeline.Workspace)/manifests/frontend.yml'
+              secretType: 'dockerRegistry'
+              containerRegistryType: 'Azure Container Registry'
+              azureSubscriptionEndpointForSecrets: 'Free Trial(11)(17f851e4-a297-478b-8b1b-49033c27e889)'
+              azureContainerRegistry: 'plzwork.azurecr.io'
+              secretName: '$(imagePullSecret)'
+          - task: Kubernetes@1
+            displayName: Deploy Nginx
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceEndpoint: 'k8spipeline-plzworkplz'
+              namespace: 'plzworkplz'
+              command: 'apply'
+              arguments: '-f $(Pipeline.Workspace)/manifests/nginx.yml'
+              secretType: 'dockerRegistry'
+              containerRegistryType: 'Azure Container Registry'
+
+          - task: Bash@3
+            displayName: Deployment Completion
+            inputs:
+                targetType: 'inline'
+                script: '#!/bin/bash Deployed!'
